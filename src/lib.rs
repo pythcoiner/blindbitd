@@ -1,5 +1,4 @@
 mod error;
-use corepc_node::Client;
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write},
@@ -77,7 +76,7 @@ pub struct BlindbitD {
     /// Path to the binary
     pub binary: PathBuf,
     /// Bitcoind
-    pub bitcoin: corepc_node::Node,
+    pub bitcoin: Option<corepc_node::Node>,
 }
 
 fn try_read_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -232,7 +231,7 @@ impl BlindbitD {
             addr: ip.clone(),
             port,
             binary: exe.to_path_buf(),
-            bitcoin: bitcoind,
+            bitcoin: Some(bitcoind),
         })
     }
 
@@ -268,8 +267,8 @@ impl BlindbitD {
         format!("http://{}:{}", self.addr, self.port)
     }
 
-    pub fn bitcoin(&mut self) -> &mut Client {
-        &mut self.bitcoin.client
+    pub fn bitcoin(&mut self) -> Option<corepc_node::Node> {
+        self.bitcoin.take()
     }
 }
 
