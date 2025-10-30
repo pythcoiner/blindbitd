@@ -1,4 +1,5 @@
 mod error;
+use corepc_node::Conf;
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write},
@@ -136,7 +137,9 @@ impl BlindbitD {
         let work_dir = TempDir::with_prefix("blindbit_").unwrap();
 
         // launch bitcoind
-        let bitcoind = corepc_node::Node::from_downloaded().unwrap();
+        let mut conf = Conf::default();
+        conf.args.push("-txindex");
+        let bitcoind = corepc_node::Node::from_downloaded_with_conf(&conf).unwrap();
         let bitcoind_addr = bitcoind.params.rpc_socket;
         let bitcoind_cookie = bitcoind.params.cookie_file.clone().canonicalize().unwrap();
 
