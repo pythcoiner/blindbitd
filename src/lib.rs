@@ -17,6 +17,36 @@ use temp_dir::TempDir;
 
 pub use error::Error;
 
+// See https://github.com/setavenger/blindbit-oracle/blob/7e7a0e32e2ff3e1c97182a4723b1ce60335cc2f9/src/common/config.go#L45
+// viper.SetDefault("tweaks_only", false)
+// viper.SetDefault("tweaks_full_basic", true)
+// viper.SetDefault("tweaks_full_with_dust_filter", false)
+// viper.SetDefault("tweaks_cut_through_with_dust_filter", false)
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Features {
+    TweaksOnly,
+    FullBasic,
+    DustFilter,
+    DustFilterCutThrough,
+}
+
+impl From<&Features> for (u8, u8, u8, u8) {
+    fn from(value: &Features) -> Self {
+        match value {
+            Features::TweaksOnly => (1, 0, 0, 0),
+            Features::FullBasic => (0, 1, 0, 0),
+            Features::DustFilter => (0, 0, 1, 0),
+            Features::DustFilterCutThrough => (0, 0, 0, 1),
+        }
+    }
+}
+
+impl Features {
+    pub fn values(&self) -> (u8, u8, u8, u8) {
+        self.into()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub struct Conf<'a> {
@@ -38,6 +68,9 @@ pub struct Conf<'a> {
 
     // Path to the binary
     pub binary: Option<String>,
+
+    /// Features
+    pub features: Features,
 }
 
 impl Default for Conf<'_> {
@@ -48,6 +81,7 @@ impl Default for Conf<'_> {
             ip: None,
             port: None,
             binary: None,
+            features: Features::DustFilterCutThrough,
         }
     }
 }
@@ -136,9 +170,9 @@ impl BlindbitD {
         let work_dir = TempDir::with_prefix("blindbit_").unwrap();
 
         // launch bitcoind
-        let mut conf = corepc_node::Conf::default();
-        conf.args.push("-txindex");
-        let bitcoind = corepc_node::Node::from_downloaded_with_conf(&conf).unwrap();
+        let mut bitcoin_conf = corepc_node::Conf::default();
+        bitcoin_conf.args.push("-txindex");
+        let bitcoind = corepc_node::Node::from_downloaded_with_conf(&bitcoin_conf).unwrap();
         let bitcoind_addr = bitcoind.params.rpc_socket;
         let bitcoind_cookie = bitcoind.params.cookie_file.clone().canonicalize().unwrap();
 
@@ -157,10 +191,11 @@ impl BlindbitD {
         writeln!(file, "sync_start_height = 1").unwrap();
         writeln!(file, "max_parallel_tweak_computations = 4").unwrap();
         writeln!(file, "max_parallel_requests = 4").unwrap();
-        writeln!(file, "tweaks_only = 0").unwrap();
-        writeln!(file, "tweaks_full_basic = 1").unwrap();
-        writeln!(file, "tweaks_full_with_dust_filter = 0").unwrap();
-        writeln!(file, "tweaks_cut_through_with_dust_filter = 0").unwrap();
+        let (a, b, c, d) = conf.features.values();
+        writeln!(file, "tweaks_only = {a}").unwrap();
+        writeln!(file, "tweaks_full_basic = {b}").unwrap();
+        writeln!(file, "tweaks_full_with_dust_filter = {c}").unwrap();
+        writeln!(file, "tweaks_cut_through_with_dust_filter = {d}").unwrap();
         drop(file);
 
         let mut file = File::open(config_path).unwrap();
@@ -177,7 +212,7 @@ impl BlindbitD {
 
         let mut p = None;
         #[allow(clippy::never_loop)]
-        'f: for _ in 0..conf.attempts {
+        'f: for _ in 0..bitcoin_conf.attempts {
             let mut process = Command::new(exe)
                 .args(args.clone())
                 .stderr(Stdio::piped())
@@ -215,7 +250,10 @@ impl BlindbitD {
         let mut process = if let Some(p) = p {
             p
         } else {
-            panic!("Fail to start BlindbitD after {} attempts", conf.attempts);
+            panic!(
+                "Fail to start BlindbitD after {} attempts",
+                bitcoin_conf.attempts
+            );
         };
         let stderr = process.stderr.take().unwrap();
 
