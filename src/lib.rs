@@ -86,6 +86,16 @@ impl Default for Conf<'_> {
     }
 }
 
+impl<'a> Conf<'a> {
+    /// Create a new Conf with the specified features
+    pub fn with_features(features: Features) -> Self {
+        Self {
+            features,
+            ..Default::default()
+        }
+    }
+}
+
 /// Returns a non-used local port if available.
 ///
 /// Note there is a race condition during the time the method check availability and the caller
