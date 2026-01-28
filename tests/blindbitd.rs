@@ -1,8 +1,9 @@
-use blindbitd::{BlindbitD, Conf, Features};
+use blindbitd::{BlindbitD, Conf, Storage};
 use serde::Deserialize;
 use std::{thread, time::Duration};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct InfoResponse {
     network: String,
     height: u32,
@@ -87,7 +88,7 @@ fn test_config_parsing_default() {
 /// This should enable /tweak-index and disable /tweaks
 #[test]
 fn test_config_parsing_full_basic() {
-    let conf = Conf::with_features(Features::FullBasic);
+    let conf = Conf::with_storage(Storage::FullBasic);
     let mut bbd = BlindbitD::with_conf(&conf).unwrap();
     println!("=== BlindbitD with FullBasic config ===");
     println!("URL: {}", bbd.url());
@@ -165,7 +166,7 @@ fn test_info_endpoint_default() {
 /// Verifies that the oracle correctly reports its feature flags
 #[test]
 fn test_info_endpoint_full_basic() {
-    let conf = Conf::with_features(Features::FullBasic);
+    let conf = Conf::with_storage(Storage::FullBasic);
     let mut bbd = BlindbitD::with_conf(&conf).unwrap();
     let mut node = bbd.bitcoin().unwrap();
     let bitcoind = &mut node.client;
@@ -282,7 +283,7 @@ fn test_endpoints_with_cutthrough_config() {
 /// are taproot transactions (the oracle indexes full tweak index without cut-through).
 #[test]
 fn test_endpoints_with_full_basic_config() {
-    let conf = Conf::with_features(Features::FullBasic);
+    let conf = Conf::with_storage(Storage::FullBasic);
     let mut bbd = BlindbitD::with_conf(&conf).unwrap();
     let mut node = bbd.bitcoin().unwrap();
     let bitcoind = &mut node.client;

@@ -9,7 +9,6 @@ license-file = "LICENSE"
 edition = "2021"
 categories = ["development-tools::testing"]
 
-# Standalone workspace - not part of spdk workspace
 [workspace]
 
 [dependencies]

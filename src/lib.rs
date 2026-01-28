@@ -17,32 +17,63 @@ use temp_dir::TempDir;
 
 pub use error::Error;
 
-// See https://github.com/setavenger/blindbit-oracle/blob/7e7a0e32e2ff3e1c97182a4723b1ce60335cc2f9/src/common/config.go#L45
-// viper.SetDefault("tweaks_only", false)
-// viper.SetDefault("tweaks_full_basic", true)
-// viper.SetDefault("tweaks_full_with_dust_filter", false)
-// viper.SetDefault("tweaks_cut_through_with_dust_filter", false)
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Features {
-    TweaksOnly,
+/// Storage strategy for the blindbit-oracle server.
+///
+/// Each variant enables a specific data storage model. The two endpoints
+/// `/tweak-index` and `/tweaks` serve different data structures:
+///
+/// - `/tweak-index` → queries block-level index (TweakIndex or TweakIndexDust)
+/// - `/tweaks` → queries per-transaction storage (individual Tweaks)
+///
+/// **Important:** These are mutually exclusive storage strategies. Only one
+/// endpoint will return data depending on which storage is enabled.
+///
+/// See also: <https://github.com/setavenger/blindbit-oracle>
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Storage {
+    /// Block-level index without dust filtering.
+    ///
+    /// - Server config: `tweaks_full_basic=1`
+    /// - Storage: TweakIndex (33-byte tweaks per block)
+    /// - `/tweak-index`: works (dustLimit=0 only, errors on dustLimit>0)
+    /// - `/tweaks`: returns empty `[]`
+    /// - Use case: Simple full-block scanning, no dust optimization
     FullBasic,
+
+    /// Block-level index WITH dust filtering support.
+    ///
+    /// - Server config: `tweaks_full_with_dust_filter=1`
+    /// - Storage: TweakIndexDust (tweaks + highest output value per block)
+    /// - `/tweak-index`: works with optional dustLimit filtering
+    /// - `/tweaks`: returns empty `[]`
+    /// - Use case: Full-block scanning with client-side dust filtering
     DustFilter,
+
+    /// Per-transaction storage with dust filtering and cut-through.
+    ///
+    /// - Server config: `tweaks_cut_through_with_dust_filter=1`
+    /// - Storage: Individual Tweaks per transaction (prunable)
+    /// - `/tweak-index`: returns empty `[]`
+    /// - `/tweaks`: works with optional dustLimit filtering
+    /// - Use case: Space-efficient storage, tweaks pruned when outputs spent
+    ///
+    /// **Note:** Cannot be combined with `tweaks_only=true` (requires UTXO tracking).
     DustFilterCutThrough,
 }
 
-impl From<&Features> for (u8, u8, u8, u8) {
-    fn from(value: &Features) -> Self {
+impl From<&Storage> for (u8, u8, u8) {
+    fn from(value: &Storage) -> Self {
         match value {
-            Features::TweaksOnly => (1, 0, 0, 0),
-            Features::FullBasic => (0, 1, 0, 0),
-            Features::DustFilter => (0, 0, 1, 0),
-            Features::DustFilterCutThrough => (0, 0, 0, 1),
+            Storage::FullBasic => (1, 0, 0),
+            Storage::DustFilter => (0, 1, 0),
+            Storage::DustFilterCutThrough => (0, 0, 1),
         }
     }
 }
 
-impl Features {
-    pub fn values(&self) -> (u8, u8, u8, u8) {
+impl Storage {
+    /// Returns the server config flags as (tweaks_full_basic, tweaks_full_with_dust_filter, tweaks_cut_through_with_dust_filter)
+    pub fn values(&self) -> (u8, u8, u8) {
         self.into()
     }
 }
@@ -69,8 +100,17 @@ pub struct Conf<'a> {
     // Path to the binary
     pub binary: Option<String>,
 
-    /// Features
-    pub features: Features,
+    /// Storage strategy for tweaks
+    pub storage: Storage,
+
+    /// Skip UTXO processing (filters, spent index, etc.)
+    ///
+    /// When `true`, the server only handles tweak storage, not UTXO tracking.
+    /// This saves storage and processing but disables some features.
+    ///
+    /// **Note:** Cannot be `true` when using `Storage::DustFilterCutThrough`
+    /// (cut-through requires UTXO tracking to prune spent outputs).
+    pub tweaks_only: bool,
 }
 
 impl Default for Conf<'_> {
@@ -81,16 +121,33 @@ impl Default for Conf<'_> {
             ip: None,
             port: None,
             binary: None,
-            features: Features::DustFilterCutThrough,
+            storage: Storage::DustFilterCutThrough,
+            tweaks_only: false,
         }
     }
 }
 
-impl<'a> Conf<'a> {
-    /// Create a new Conf with the specified features
-    pub fn with_features(features: Features) -> Self {
+impl Conf<'_> {
+    /// Create a new Conf with the specified storage strategy
+    pub fn with_storage(storage: Storage) -> Self {
         Self {
-            features,
+            storage,
+            ..Default::default()
+        }
+    }
+
+    /// Create a new Conf with tweaks_only mode and given storage
+    ///
+    /// # Panics
+    /// Panics if storage is `DustFilterCutThrough` (incompatible with tweaks_only)
+    pub fn tweaks_only_with(storage: Storage) -> Self {
+        assert!(
+            storage != Storage::DustFilterCutThrough,
+            "tweaks_only cannot be used with DustFilterCutThrough (requires UTXO tracking)"
+        );
+        Self {
+            storage,
+            tweaks_only: true,
             ..Default::default()
         }
     }
@@ -150,13 +207,8 @@ impl BlindbitD {
         let ip = conf.ip.clone().unwrap_or("127.0.0.1".into());
         let port = conf.port.unwrap_or(get_available_port()?);
 
-        let file_path = file!();
-        let mut bin_dir = Path::new(file_path)
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        // Use CARGO_MANIFEST_DIR for reliable path resolution in workspace builds
+        let mut bin_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         bin_dir.push("bin");
         bin_dir.push("blindbit_bcd562f");
 
@@ -201,11 +253,12 @@ impl BlindbitD {
         writeln!(file, "sync_start_height = 1").unwrap();
         writeln!(file, "max_parallel_tweak_computations = 4").unwrap();
         writeln!(file, "max_parallel_requests = 4").unwrap();
-        let (a, b, c, d) = conf.features.values();
-        writeln!(file, "tweaks_only = {a}").unwrap();
-        writeln!(file, "tweaks_full_basic = {b}").unwrap();
-        writeln!(file, "tweaks_full_with_dust_filter = {c}").unwrap();
-        writeln!(file, "tweaks_cut_through_with_dust_filter = {d}").unwrap();
+        let tweaks_only = u8::from(conf.tweaks_only);
+        let (a, b, c) = conf.storage.values();
+        writeln!(file, "tweaks_only = {tweaks_only}").unwrap();
+        writeln!(file, "tweaks_full_basic = {a}").unwrap();
+        writeln!(file, "tweaks_full_with_dust_filter = {b}").unwrap();
+        writeln!(file, "tweaks_cut_through_with_dust_filter = {c}").unwrap();
         drop(file);
 
         let mut file = File::open(config_path).unwrap();
