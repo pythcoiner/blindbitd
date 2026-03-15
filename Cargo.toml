@@ -11,10 +11,14 @@ categories = ["development-tools::testing"]
 
 [workspace]
 
+[features]
+electrum = ["electrsd"]
+
 [dependencies]
 temp-dir = "0.1.14"
 nix = {version = "0.29.0", features = ["signal"]}
 corepc-node = { version = "0.10.0" , features = ["download", "29_0"] }
+electrsd = { version = "0.36.1", features = ["electrs_0_10_6"], optional = true }
 
 [dev-dependencies]
 ureq = "2.9"

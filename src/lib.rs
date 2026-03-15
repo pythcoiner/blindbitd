@@ -179,6 +179,9 @@ pub struct BlindbitD {
     pub binary: PathBuf,
     /// Bitcoind
     pub bitcoin: Option<corepc_node::Node>,
+    /// Electrsd
+    #[cfg(feature = "electrum")]
+    pub electrsd: Option<electrsd::ElectrsD>,
 }
 
 fn try_read_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -239,6 +242,14 @@ impl BlindbitD {
         let bitcoind = corepc_node::Node::from_downloaded_with_conf(&bitcoin_conf).unwrap();
         let bitcoind_addr = bitcoind.params.rpc_socket;
         let bitcoind_cookie = bitcoind.params.cookie_file.clone().canonicalize().unwrap();
+
+        #[cfg(feature = "electrum")]
+        let electrsd = {
+            let electrs_exe = electrsd::downloaded_exe_path()
+                .expect("electrs binary not found");
+            electrsd::ElectrsD::new(electrs_exe, &bitcoind)
+                .expect("failed to spawn electrsd")
+        };
 
         // config file
         let config_path = work_dir.child("blindbit.toml");
@@ -337,6 +348,8 @@ impl BlindbitD {
             port,
             binary: exe.to_path_buf(),
             bitcoin: Some(bitcoind),
+            #[cfg(feature = "electrum")]
+            electrsd: Some(electrsd),
         })
     }
 
@@ -374,6 +387,11 @@ impl BlindbitD {
 
     pub fn bitcoin(&mut self) -> Option<corepc_node::Node> {
         self.bitcoin.take()
+    }
+
+    #[cfg(feature = "electrum")]
+    pub fn electrum(&mut self) -> Option<electrsd::ElectrsD> {
+        self.electrsd.take()
     }
 }
 

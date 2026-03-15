@@ -312,3 +312,23 @@ fn test_endpoints_with_full_basic_config() {
     // - /tweaks returns empty (cut-through index not built)
     // Note: Both are empty here because coinbase txs don't have taproot inputs
 }
+
+#[test]
+#[cfg(feature = "electrum")]
+fn test_electrsd_spawns() {
+    use electrsd::electrum_client::ElectrumApi;
+
+    let mut bbd = BlindbitD::new().unwrap();
+    let mut node = bbd.bitcoin().unwrap();
+    let bitcoind = &mut node.client;
+
+    let address = bitcoind.new_address().unwrap();
+    bitcoind.generate_to_address(10, &address).unwrap();
+
+    let electrsd = bbd.electrum().expect("electrsd should be available");
+    println!("Electrum URL: {}", electrsd.electrum_url);
+
+    let header = electrsd.client.block_headers_subscribe().unwrap();
+    assert!(header.height > 0);
+    println!("Electrsd header height: {}", header.height);
+}
