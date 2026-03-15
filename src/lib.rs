@@ -1,4 +1,5 @@
 mod error;
+use corepc_node::P2P;
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write},
@@ -234,6 +235,7 @@ impl BlindbitD {
         // launch bitcoind
         let mut bitcoin_conf = corepc_node::Conf::default();
         bitcoin_conf.args.push("-txindex");
+        bitcoin_conf.p2p = P2P::Yes;
         let bitcoind = corepc_node::Node::from_downloaded_with_conf(&bitcoin_conf).unwrap();
         let bitcoind_addr = bitcoind.params.rpc_socket;
         let bitcoind_cookie = bitcoind.params.cookie_file.clone().canonicalize().unwrap();
